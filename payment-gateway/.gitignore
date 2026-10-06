@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+dist/
+build/
+*.log
+
+# Env files (NEVER commit)
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+
+# Prisma
+backend/prisma/migrations/*_dev/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/google-services.json
+*.apk
+*.aab
+*.keystore
+*.jks
+android/.idea/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+
+# Railway
+.railway/
