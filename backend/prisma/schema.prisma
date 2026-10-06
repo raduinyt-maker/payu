@@ -1,0 +1,335 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  SUPPORT
+  MERCHANT
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String
+  role          Role      @default(MERCHANT)
+  emailVerified Boolean   @default(false)
+  resetToken    String?
+  resetExpires  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  merchant  Merchant?
+  auditLogs AuditLog[]
+
+  @@index([email])
+}
+
+model Merchant {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  businessName     String
+  businessPhone    String?
+  businessEmail    String?
+  website          String?
+  logoUrl          String?
+  currency         String   @default("BDT")
+  availableBalance Decimal  @default(0) @db.Decimal(18, 2)
+  pendingBalance   Decimal  @default(0) @db.Decimal(18, 2)
+  webhookUrl       String?
+  webhookSecret    String
+  isActive         Boolean  @default(true)
+  kycStatus        String   @default("PENDING")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeys       ApiKey[]
+  payments      Payment[]
+  payouts       Payout[]
+  refunds       Refund[]
+  notifications Notification[]
+  devices       Device[]
+  tickets       SupportTicket[]
+  webhooks      Webhook[]
+
+  @@index([userId])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  merchantId String
+  name       String
+  keyPrefix  String    @unique
+  keyHash    String
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([keyPrefix])
+}
+
+model PaymentProvider {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  displayName String
+  isActive    Boolean  @default(false)
+  configJson  Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  paymentId      String        @unique
+  transactionId  String        @unique
+  merchantId     String
+  orderId        String
+  amount         Decimal       @db.Decimal(18, 2)
+  currency       String        @default("BDT")
+  customerName   String?
+  customerPhone  String?
+  customerEmail  String?
+  description    String?
+  successUrl     String?
+  cancelUrl      String?
+  webhookUrl     String?
+  providerName   String        @default("manual")
+  providerRef    String?
+  status         PaymentStatus @default(PENDING)
+  expiresAt      DateTime
+  paidAt         DateTime?
+  failureReason  String?
+  idempotencyKey String?
+  checkoutToken  String        @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  merchant     Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  refunds      Refund[]
+
+  @@unique([merchantId, orderId])
+  @@index([merchantId, status])
+  @@index([paymentId])
+  @@index([transactionId])
+  @@index([idempotencyKey])
+  @@index([createdAt])
+}
+
+model Transaction {
+  id           String        @id @default(cuid())
+  paymentId    String
+  status       PaymentStatus
+  amount       Decimal       @db.Decimal(18, 2)
+  currency     String
+  providerName String?
+  providerRef  String?
+  message      String?
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([status])
+}
+
+model Webhook {
+  id         String   @id @default(cuid())
+  merchantId String
+  url        String
+  secret     String
+  events     String[]
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant   Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([merchantId])
+}
+
+model WebhookDelivery {
+  id           String                @id @default(cuid())
+  webhookId    String
+  paymentId    String?
+  event        String
+  payload      Json
+  signature    String
+  status       WebhookDeliveryStatus @default(PENDING)
+  attempts     Int                   @default(0)
+  responseCode Int?
+  responseBody String?
+  nextRetryAt  DateTime?
+  deliveredAt  DateTime?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, status])
+  @@index([paymentId])
+  @@index([nextRetryAt])
+}
+
+model Payout {
+  id          String       @id @default(cuid())
+  merchantId  String
+  amount      Decimal      @db.Decimal(18, 2)
+  currency    String       @default("BDT")
+  status      PayoutStatus @default(PENDING)
+  method      String
+  accountInfo Json
+  reference   String?
+  note        String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status])
+}
+
+model Refund {
+  id          String       @id @default(cuid())
+  paymentId   String
+  merchantId  String
+  amount      Decimal      @db.Decimal(18, 2)
+  reason      String?
+  status      RefundStatus @default(PENDING)
+  providerRef String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  payment  Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([merchantId])
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  merchantId String
+  title      String
+  body       String
+  type       String
+  data       Json?
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, isRead])
+}
+
+model Device {
+  id         String   @id @default(cuid())
+  merchantId String
+  fcmToken   String   @unique
+  platform   String   @default("android")
+  deviceName String?
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+}
+
+model SupportTicket {
+  id         String       @id @default(cuid())
+  merchantId String
+  subject    String
+  message    String
+  status     TicketStatus @default(OPEN)
+  priority   String       @default("NORMAL")
+  replies    Json?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  resource   String
+  resourceId String?
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model IdempotencyKey {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  scope     String
+  response  Json
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([key])
+}
